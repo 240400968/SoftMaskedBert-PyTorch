@@ -1,6 +1,5 @@
 lxml
-torch
-pytorch_lightning
 transformers
+
 opencc
 tqdm
