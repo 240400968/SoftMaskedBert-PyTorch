@@ -41,9 +41,9 @@ class Trainer:
         
 
         # Distributed GPU training if CUDA can detect more than 1 GPU
-        # if with_cuda and torch.cuda.device_count() > 1:
-        #     print("Using %d GPUS for SoftMaskedBERT" % torch.cuda.device_count())
-        #     self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
+        if with_cuda and torch.cuda.device_count() > 1:
+            print("Using %d GPUS for SoftMaskedBERT" % torch.cuda.device_count())
+            self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
 
         # Setting the train and test data loader
         self.train_data = train_dataloader
@@ -94,23 +94,21 @@ class Trainer:
             # 0. batch_data will be sent into the device(GPU or cpu)
             ori_text, cor_text, det_labels = data
             encoded_ori_texts = self.tokenizer(ori_text, padding=True, return_tensors='pt')
-            encoded_ori_texts.to(self.device)
             encoded_cor_text = self.tokenizer(cor_text, padding=True, return_tensors='pt')
             encoded_cor_text = encoded_cor_text.to(self.device)
             det_labels = det_labels.to(self.device)
-            # print('encoded_ori_texts size is ', encoded_ori_texts['input_ids'].size())
-            # print('encoded_cor_text size is ', encoded_cor_text['input_ids'].size())
-            # print('det_labels size is ', det_labels.size())
-
 
             # 1. forward the SoftMaskedBert model
-            # print("encoded_ori_texts device:", encoded_ori_texts['input_ids'].device)
-            # print("encoded_cor_text device:", encoded_cor_text['input_ids'].device)
-            # print("det_labels device:", det_labels.device)
-            outputs = self.model.forward(encoded_ori_texts, encoded_cor_text['input_ids'], det_labels)
+            encoded_ori_texts_input_ids = encoded_ori_texts['input_ids'].to(self.device)
+            encoded_ori_texts_token_type_ids = encoded_ori_texts['token_type_ids'].to(self.device)
+            encoded_ori_texts_attention_mask = encoded_ori_texts['attention_mask'].to(self.device)
+            outputs = self.model.forward(encoded_ori_texts_input_ids,
+                        encoded_ori_texts_token_type_ids,
+                        encoded_ori_texts_attention_mask, encoded_cor_text['input_ids'], det_labels)
 
             # 2. calculate loss 
             loss = 0.8 * outputs[1] + 0.2 * outputs[0]
+            loss = loss.sum()
 
             # 3. backward and optimization only in train
             if train:

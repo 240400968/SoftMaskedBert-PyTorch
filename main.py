@@ -14,7 +14,8 @@ from src.data_processor import preproc
 from src.utils import get_abs_path
 from src.trainer import Trainer
 
-
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1,2,3"
 def str2bool(v):
     if isinstance(v, bool):
         return v

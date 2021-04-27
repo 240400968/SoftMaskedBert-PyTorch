@@ -50,26 +50,28 @@ class BertCorrectionModel(torch.nn.Module, ModuleUtilsMixin):
         self.pooler = BertPooler(self.config)
         self.cls = BertOnlyMLMHead(self.config)
 
-    def forward(self, encoded_texts, prob, embed=None, text_labels=None, residual_connection=False):
+    def forward(self, encoded_ori_texts_input_ids,
+                        encoded_ori_texts_token_type_ids,
+                        encoded_ori_texts_attention_mask, prob, embed=None, text_labels=None, residual_connection=False):
         if text_labels is not None:
             # torch的cross entropy loss 会忽略-100的label
             text_labels[text_labels == 0] = -100
         else:
             text_labels = None
         if embed is None:
-            embed = self.embeddings(input_ids=encoded_texts['input_ids'],
-                                    token_type_ids=encoded_texts['token_type_ids'])
-        device = encoded_texts['input_ids'].device
+            embed = self.embeddings(input_ids=encoded_ori_texts_input_ids,
+                                    token_type_ids=encoded_ori_texts_token_type_ids)
+        device = encoded_ori_texts_input_ids.device
         # 此处较原文有一定改动，做此改动意在完整保留type_ids及position_ids的embedding。
         # mask_embed = self.embeddings(torch.ones_like(prob.squeeze(-1)).long() * self.mask_token_id).detach()
         # 此处为原文实现
         mask_embed = self.embeddings(torch.tensor([[self.mask_token_id]], device=device)).detach()
         cor_embed = prob * mask_embed + (1 - prob) * embed
 
-        input_shape = encoded_texts['input_ids'].size()
+        input_shape = encoded_ori_texts_input_ids.size()
         
 
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(encoded_texts['attention_mask'],
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(encoded_ori_texts_attention_mask,
                                                                                  input_shape, device)
         head_mask = self.get_head_mask(None, self.config.num_hidden_layers)
         encoder_outputs = self.corrector(
@@ -90,8 +92,6 @@ class BertCorrectionModel(torch.nn.Module, ModuleUtilsMixin):
         # Masked language modeling softmax layer
         if text_labels is not None:
             loss_fct = nn.CrossEntropyLoss(reduction='sum')  # -100 index = padding token
-            # print("prediction_scores size is ", prediction_scores.size())
-            # print("text_labels size is ", text_labels.size())
             cor_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), text_labels.view(-1))
             out = (cor_loss,) + out
         return out
@@ -206,16 +206,20 @@ class SoftMaskedBertModel(nn.Module):
         self.detector = DetectionNetwork(self.config)
         self.corrector = BertCorrectionModel(self.config, mask_token_id)
 
-    def forward(self, encoded_ori_texts, text_labels=None, det_labels=None):
-        embed = self.corrector.embeddings(input_ids=encoded_ori_texts['input_ids'],
-                                          token_type_ids=encoded_ori_texts['token_type_ids'])
+    def forward(self, encoded_ori_texts_input_ids,
+                        encoded_ori_texts_token_type_ids,
+                        encoded_ori_texts_attention_mask, text_labels=None, det_labels=None):
+        embed = self.corrector.embeddings(input_ids=encoded_ori_texts_input_ids,
+                                          token_type_ids=encoded_ori_texts_token_type_ids)
         prob = self.detector(embed)
-        cor_out = self.corrector(encoded_ori_texts, prob, embed, text_labels, residual_connection=True)
+        cor_out = self.corrector(encoded_ori_texts_input_ids,
+                        encoded_ori_texts_token_type_ids,
+                        encoded_ori_texts_attention_mask, prob, embed, text_labels, residual_connection=True)
 
         if det_labels is not None:
             det_loss_fct = nn.BCELoss(reduction='sum')
             # pad部分不计算损失
-            active_loss = encoded_ori_texts['attention_mask'].view(-1, prob.shape[1]) == 1
+            active_loss = encoded_ori_texts_attention_mask.view(-1, prob.shape[1]) == 1
             active_probs = prob.view(-1, prob.shape[1])[active_loss]
             active_labels = det_labels[active_loss]
             det_loss = det_loss_fct(active_probs, active_labels.float())
